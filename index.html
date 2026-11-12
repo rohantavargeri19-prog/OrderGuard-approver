@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#f6f4ef">
+<title>OrderGuard</title>
+<style>
+  :root { --bg:#f6f4ef; --ink:#1d1f23; --soft:#6b7080; --card:#fff; --line:#e7e3da; --red:#d4553b; --green:#2f7d4f; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+  main { max-width: 480px; margin: 0 auto; padding: max(28px, env(safe-area-inset-top)) 20px 40px; }
+  .brand { font-size: 13px; color: var(--soft); }
+  h1 { font-size: 28px; margin: 6px 0 2px; }
+  .sub { color: #4a4e58; font-size: 15.5px; }
+  .card { background: var(--card); border-radius: 18px; padding: 18px; box-shadow: 0 2px 12px rgba(0,0,0,.06); margin-top: 14px; }
+  .title { font-size: 19px; font-weight: 700; }
+  .reason { font-size: 16px; margin-top: 10px; color: #2b2d33; }
+  .line { font-size: 14.5px; color: #3c3f47; margin-top: 6px; }
+  .meta { font-size: 13.5px; color: var(--soft); margin-top: 12px; }
+  .bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; margin-top: 8px; }
+  .bar i { display: block; height: 100%; background: var(--green); }
+  .bar.over i { background: var(--red); }
+  .btns { display: flex; gap: 10px; margin-top: 16px; }
+  button { flex: 1; height: 50px; border: 0; border-radius: 13px; font-family: inherit; font-weight: 700; font-size: 16px; cursor: pointer; }
+  .yes { background: var(--ink); color: #fff; }
+  .no { background: #efece5; color: var(--ink); }
+  button:disabled { opacity: .5; }
+  .warn { background: #fff4ef; border: 1px solid #f1cdbf; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin-top: 10px; }
+  h2 { font-size: 13.5px; color: var(--soft); font-weight: 600; margin: 26px 0 0; }
+  .hist { background: var(--card); border-radius: 16px; margin-top: 10px; padding: 4px 16px; box-shadow: 0 2px 12px rgba(0,0,0,.04); }
+  .hist div { padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .hist div:last-child { border-bottom: 0; }
+  .hist small { display: block; color: var(--soft); font-size: 13px; margin-top: 2px; }
+  .ok { color: var(--green); font-weight: 700; } .bad { color: var(--red); font-weight: 700; }
+  .center { text-align: center; margin-top: 90px; }
+  .big { font-size: 52px; }
+  .muted { color: var(--soft); }
+  .foot { font-size: 12.5px; color: var(--soft); margin-top: 28px; }
+</style>
+</head>
+<body>
+<main id="app"><p class="muted" style="margin-top:80px;text-align:center">Loading…</p></main>
+<script>
+"use strict";
+// The private link is https://…/#t=<64 hex>. The part after # never leaves this phone
+// except in the requests below, which go only to OrderGuard's server.
+const API = "https://oridrwummjrfyhpyttig.supabase.co/functions/v1/approval-code";
+const token = (new URLSearchParams(location.hash.slice(1)).get("t") || "").toLowerCase();
+const app = document.getElementById("app");
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const inr = (p) => { const n = Number(p || 0), d = n % 100 ? 2 : 0;
+  return "₹" + (n / 100).toLocaleString("en-IN", { minimumFractionDigits: d, maximumFractionDigits: d }); };
+const dur = (s) => { s = Number(s || 0); if (s < 3600) return Math.round(s / 60) + " minutes";
+  const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h + (h === 1 ? " hour" : " hours") + (m ? " " + m + " minutes" : ""); };
+const day = (iso) => { try { return new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true }); } catch { return ""; } };
+
+async function call(body) {
+  const r = await fetch(API, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...body, token }) });
+  let data = null; try { data = await r.json(); } catch {}
+  return { ok: r.ok, status: r.status, data };
+}
+
+function dead(msg) {
+  app.innerHTML = `<div class="center"><div class="big">🔒</div><h1>This link has expired</h1>
+    <p class="sub">${esc(msg || "Open the newest OrderGuard email and tap its button. Every email brings a fresh link.")}</p></div>`;
+}
+
+function render(d) {
+  const name = d.approver_name ? `Hi ${esc(d.approver_name)} 👋` : "Hi 👋";
+  const pct = d.budget_paise > 0 ? Math.round((d.spent_paise / d.budget_paise) * 100) : 0;
+  const pending = d.pending || [];
+  const cards = pending.map((p) => {
+    const title = p.purpose === "unlock_app" && p.app ? `Unlock ${esc(p.app)} for ${esc(dur(p.duration_seconds))}` : esc(p.summary);
+    const lines = (p.lines || []).filter((l) => !/^Spent this month|^Their reason|locks again by itself/.test(l))
+      .map((l) => `<div class="line">${esc(l)}</div>`).join("");
+    const warn = p.purpose === "remove_approver"
+      ? `<div class="warn">If you approve, you stop being ${esc(d.owner_name)}'s approver and they can unlock apps without you.</div>` : "";
+    return `<div class="card" data-id="${esc(p.id)}">
+      <div class="title">${title}</div>
+      ${p.reason ? `<div class="reason">“${esc(p.reason)}”</div>` : ""}
+      ${lines}${warn}
+      <div class="meta">Spent ${inr(d.spent_paise)} of ${inr(d.budget_paise)} this month</div>
+      <div class="bar ${pct >= 90 ? "over" : ""}"><i style="width:${Math.min(100, pct)}%"></i></div>
+      <div class="btns"><button class="yes" data-a="1">Approve</button><button class="no" data-a="0">Decline</button></div>
+    </div>`;
+  }).join("");
+
+  const hist = (d.history || []).map((h) => {
+    const what = h.kind === "pass"
+      ? `Emergency pass ${esc(h.pass_number)} · ${esc(h.app)} · <span class="ok">30 min</span>`
+      : `${esc(h.app)} · ${esc(dur(h.duration_seconds))} · ${h.status === "approved" ? '<span class="ok">approved</span>'
+          : h.status === "rejected" ? '<span class="bad">declined</span>' : esc(h.status)}`;
+    return `<div>${what}<small>${esc(day(h.at))}${h.reason ? " · “" + esc(h.reason) + "”" : ""}</small></div>`;
+  }).join("");
+
+  app.innerHTML = `
+    <div class="brand">OrderGuard</div>
+    <h1>${name}</h1>
+    <div class="sub">${pending.length ? `${pending.length} ${pending.length === 1 ? "request" : "requests"} from ${esc(d.owner_name)}`
+                                      : `Nothing waiting from ${esc(d.owner_name)} right now`}</div>
+    ${cards}
+    ${pending.length ? "" : `<div class="card"><div class="title">${inr(d.spent_paise)} <span class="muted" style="font-weight:400;font-size:15px">of ${inr(d.budget_paise)} this month</span></div>
+      <div class="bar ${pct >= 90 ? "over" : ""}"><i style="width:${Math.min(100, pct)}%"></i></div>
+      <div class="meta">${esc(d.order_count)} orders · ${d.restricted ? "delivery apps are locked" : "apps are open"} · ${esc(d.passes_used)} of 2 emergency passes used</div></div>`}
+    ${hist ? `<h2>Earlier</h2><div class="hist">${hist}</div>` : ""}
+    <p class="foot">Keep this link to yourself: anyone with it can approve. It works for 30 days.</p>`;
+
+  app.querySelectorAll(".card[data-id] button").forEach((b) => b.addEventListener("click", () => decide(b)));
+}
+
+async function decide(btn) {
+  const card = btn.closest(".card");
+  const approve = btn.dataset.a === "1";
+  card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+  const r = await call({ web: "decide", code_id: card.dataset.id, approve });
+  if (r.ok) {
+    card.innerHTML = approve
+      ? `<div class="title"><span class="ok">✓ Approved</span></div><div class="line">It's open on their phone now and locks again by itself.</div>`
+      : `<div class="title"><span class="bad">Declined</span></div><div class="line">The app stays locked.</div>`;
+    setTimeout(load, 2500);
+  } else if (r.data?.error === "link_invalid") {
+    dead();
+  } else {
+    card.querySelectorAll("button").forEach((b) => (b.disabled = false));
+    alert(r.data?.error === "request_not_pending" ? "This request was already answered or has expired." : "Something went wrong. Please try again.");
+    load();
+  }
+}
+
+async function load() {
+  if (!/^[0-9a-f]{64}$/.test(token)) return dead("This page needs the link from an OrderGuard email.");
+  try {
+    const r = await call({ web: "overview" });
+    if (r.status === 404 || r.data?.error === "link_invalid") return dead();
+    if (!r.ok) throw new Error();
+    render(r.data);
+  } catch {
+    app.innerHTML = `<div class="center"><h1>Couldn't load</h1><p class="sub">Check the internet connection and try again.</p>
+      <div class="btns"><button class="yes" onclick="load()">Try again</button></div></div>`;
+  }
+}
+window.addEventListener("hashchange", () => location.reload());
+load();
+</script>
+</body>
+</html>
